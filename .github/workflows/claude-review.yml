@@ -2,6 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request_target:
+    types: [opened, synchronize, reopened]
     branches:
       - main
       - "feature/*"
@@ -13,10 +14,12 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout code (read-only)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Get PR diff
@@ -25,7 +28,6 @@ jobs:
           git diff origin/${{ github.base_ref }}...HEAD > pr.diff || git diff HEAD > pr.diff
 
       - name: Call Claude API for review
-        id: review
         run: |
           REVIEW=$(curl -s https://api.anthropic.com/v1/messages \
             -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
@@ -34,7 +36,7 @@ jobs:
               "model": "claude-3-5-sonnet-20240620",
               "max_tokens": 1500,
               "messages": [
-                {"role": "user", "content": "Review this code diff:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
+                {"role": "user", "content": "You are a code reviewer. Please review this code diff:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
               ]
             }' | jq -r '.content[0].text')
           echo "$REVIEW" > review.txt
