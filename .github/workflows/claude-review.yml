@@ -1,20 +1,23 @@
 name: Claude Code Review
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
       - "feature/*"
 
+permissions:
+  pull-requests: write
+  contents: read
+
 jobs:
   review:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # cần đầy đủ lịch sử commit để diff
+          fetch-depth: 0
 
       - name: Get PR diff
         run: |
@@ -31,11 +34,10 @@ jobs:
               "model": "claude-3-5-sonnet-20240620",
               "max_tokens": 1500,
               "messages": [
-                {"role": "user", "content": "You are a code reviewer. Please review this code diff and provide clear, structured feedback with focus on correctness, performance, security, and readability:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
+                {"role": "user", "content": "Review this code diff:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
               ]
             }' | jq -r '.content[0].text')
           echo "$REVIEW" > review.txt
-          echo "review=$REVIEW" >> $GITHUB_OUTPUT
 
       - name: Post review as PR comment
         uses: marocchino/sticky-pull-request-comment@v2
