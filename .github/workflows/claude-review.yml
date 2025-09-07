@@ -3,6 +3,7 @@ name: Claude Review
 on:
   pull_request:
     branches:
+      - main      # ✅ chỉ PR vào main mới chạy
       - develop   # ✅ chỉ PR vào develop mới chạy
       - feature/* # ✅ chỉ PR vào nhánh feature/* mới chạy
 
