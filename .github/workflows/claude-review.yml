@@ -1,37 +1,58 @@
-name: Claude Review
+name: Claude Full Code Review
 
 on:
-  pull_request:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
     branches:
-      - develop   # ✅ chỉ PR vào develop mới chạy
-      - feature/* # ✅ chỉ PR vào nhánh feature/* mới chạy
+      - main
+      - "feature/*"
+
+permissions:
+  pull-requests: write
+  contents: read
 
 jobs:
   review:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout PR code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
 
-      - name: Get diff
+      - name: Get list of changed files
+        id: files
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$FILES" > files.txt
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Ask Claude for review
+      - name: Run Claude review
         run: |
-          curl https://api.anthropic.com/v1/messages \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "content-type: application/json" \
-            -d '{
-              "model": "claude-3-5-sonnet-20240620",
-              "max_tokens": 1000,
-              "messages": [
-                {"role": "user", "content": "Review this code diff:\n\n'"$(cat pr.diff)"'"}
-              ]
-            }' | jq -r '.content[0].text' > review.txt
+          REVIEW=""
+          for file in $(cat files.txt); do
+            if [ -f "$file" ]; then
+              CONTENT=$(cat "$file" | head -c 12000) # tránh vượt token, chunk nếu cần
+              RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+                -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+                -H "content-type: application/json" \
+                -d '{
+                  "model": "claude-3-5-sonnet-20240620",
+                  "max_tokens": 2500,
+                  "messages": [
+                    {"role": "user", "content": "You are a **senior code reviewer**. Review the following file. Focus on:\n\n1. **Convention & Style** – coding standard, naming, formatting.\n2. **Logic & Correctness** – potential bugs, correctness of implementation.\n3. **Optimization** – performance, best practices, readability.\n\nFile: '"$file"'\n\n```'"$CONTENT"'```"}
+                  ]
+                }' | jq -r '.content[0].text')
+              REVIEW="$REVIEW\n\n### Review for $file\n$RESPONSE"
+            fi
+          done
+          echo -e "$REVIEW" > review.txt
 
-      - name: Post PR comment
+      - name: Post review to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: review.txt
