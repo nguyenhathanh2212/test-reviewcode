@@ -1,0 +1,37 @@
+name: Claude Review
+
+on:
+  pull_request:
+    branches:
+      - develop   # ✅ chỉ PR vào develop mới chạy
+      - feature/* # ✅ chỉ PR vào nhánh feature/* mới chạy
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+
+      - name: Ask Claude for review
+        run: |
+          curl https://api.anthropic.com/v1/messages \
+            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "content-type: application/json" \
+            -d '{
+              "model": "claude-3-5-sonnet-20240620",
+              "max_tokens": 1000,
+              "messages": [
+                {"role": "user", "content": "Review this code diff:\n\n'"$(cat pr.diff)"'"}
+              ]
+            }' | jq -r '.content[0].text' > review.txt
+
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: review.txt
