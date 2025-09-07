@@ -1,38 +1,43 @@
-name: Claude Review
+name: Claude Code Review
 
 on:
   pull_request:
     branches:
-      - main      # ✅ chỉ PR vào main mới chạy
-      - develop   # ✅ chỉ PR vào develop mới chạy
-      - feature/* # ✅ chỉ PR vào nhánh feature/* mới chạy
+      - main
+      - "feature/*"
 
 jobs:
   review:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Get diff
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # cần đầy đủ lịch sử commit để diff
+
+      - name: Get PR diff
         run: |
           git fetch origin ${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff || git diff HEAD > pr.diff
 
-      - name: Ask Claude for review
+      - name: Call Claude API for review
+        id: review
         run: |
-          curl https://api.anthropic.com/v1/messages \
+          REVIEW=$(curl -s https://api.anthropic.com/v1/messages \
             -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
             -H "content-type: application/json" \
             -d '{
               "model": "claude-3-5-sonnet-20240620",
-              "max_tokens": 1000,
+              "max_tokens": 1500,
               "messages": [
-                {"role": "user", "content": "Review this code diff:\n\n'"$(cat pr.diff)"'"}
+                {"role": "user", "content": "You are a code reviewer. Please review this code diff and provide clear, structured feedback with focus on correctness, performance, security, and readability:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
               ]
-            }' | jq -r '.content[0].text' > review.txt
+            }' | jq -r '.content[0].text')
+          echo "$REVIEW" > review.txt
+          echo "review=$REVIEW" >> $GITHUB_OUTPUT
 
-      - name: Post PR comment
+      - name: Post review as PR comment
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: review.txt
