@@ -1,4 +1,4 @@
-name: Claude Code Review
+name: Claude Deep Code Review
 
 on:
   pull_request_target:
@@ -16,32 +16,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code (read-only)
+      - name: Checkout PR code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Get PR diff
+      - name: Get list of changed files
         run: |
           git fetch origin ${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > pr.diff || git diff HEAD > pr.diff
+          git diff --name-only origin/${{ github.base_ref }}...HEAD > files.txt
 
-      - name: Call Claude API for review
+      - name: Run Claude deep review
         run: |
-          REVIEW=$(curl -s https://api.anthropic.com/v1/messages \
-            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
-            -H "content-type: application/json" \
-            -d '{
-              "model": "claude-3-5-sonnet-20240620",
-              "max_tokens": 1500,
-              "messages": [
-                {"role": "user", "content": "You are a code reviewer. Please review this code diff:\n\n```diff\n'"$(cat pr.diff)"'\n```"}
-              ]
-            }' | jq -r '.content[0].text')
-          echo "$REVIEW" > review.txt
+          REVIEW=""
+          for file in $(cat files.txt); do
+            if [ -f "$file" ]; then
+              CONTENT=$(cat "$file" | head -c 12000) # giới hạn dung lượng gửi
+              RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+                -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+                -H "content-type: application/json" \
+                -d '{
+                  "model": "claude-3-5-sonnet-20240620",
+                  "max_tokens": 3000,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": "You are acting as a **senior software engineer and code auditor**. Review the following source code thoroughly.\n\n### Goals:\n1. **Convention & Style**: enforce project standards, naming, formatting, modularity.\n2. **Logic & Correctness**: check for edge cases, incorrect assumptions, potential bugs.\n3. **Optimization**: find inefficient code, duplicated logic, performance issues.\n4. **Security**: highlight vulnerabilities (e.g. injection, unsafe input, insecure deps).\n5. **Best Practices**: suggest modern patterns, refactoring, testability improvements.\n\n### Rules:\n- Be strict. Assume this code is for production.\n- Point out **exact lines** that are problematic.\n- Provide **corrected code snippets** when suggesting improvements.\n- Summarize in sections: Convention, Logic, Optimization, Security.\n\nFile under review: '"$file"'\n\n```'"$CONTENT"'```"
+                    }
+                  ]
+                }' | jq -r '.content[0].text')
+              REVIEW="$REVIEW\n\n### Review for $file\n$RESPONSE"
+            fi
+          done
+          echo -e "$REVIEW" > review.txt
 
-      - name: Post review as PR comment
+      - name: Post review to PR
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: review.txt
